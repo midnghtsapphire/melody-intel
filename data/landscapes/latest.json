@@ -1,0 +1,7 @@
+{
+  "scan_date": "2026-05-06T00:00:00Z",
+  "scan_id": "00000000-0000-0000-0000-000000000000",
+  "ten_m_arc_status": "drifting",
+  "_note": "Bootstrap seed file. First real scan will replace this and produce a meaningful diff.",
+  "findings": []
+}

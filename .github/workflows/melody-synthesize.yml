@@ -1,0 +1,92 @@
+name: Melody Recon — Synthesize & Dispatch
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'data/landscapes/**'
+      - 'data/actionable.json'
+  workflow_dispatch:
+
+concurrency:
+  group: melody-dispatch
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  synthesize:
+    name: Synthesize & Dispatch
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    # Skip if the commit was made by the dispatcher itself (avoid loops)
+    if: "!contains(github.event.head_commit.message, '[dispatch]')"
+
+    steps:
+      - name: Check kill switch
+        id: pause_check
+        run: |
+          if [ -f "docs/MELODY_PAUSE" ]; then
+            echo "paused=true" >> $GITHUB_OUTPUT
+            echo "::warning::Melody is paused"
+          else
+            echo "paused=false" >> $GITHUB_OUTPUT
+          fi
+        shell: bash
+
+      - name: Checkout
+        if: steps.pause_check.outputs.paused == 'false'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Melody Synthesizer
+        if: steps.pause_check.outputs.paused == 'false'
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          model: claude-opus-4-7
+          prompt_file: .routines/synthesize-and-dispatch.md
+          allowed_tools: |
+            Read
+            Write
+            Edit
+            WebFetch
+            Bash(git add:*)
+            Bash(git commit:*)
+            Bash(git push:*)
+            Bash(git checkout:*)
+            Bash(git config:*)
+            Bash(gh pr create:*)
+            Bash(gh pr edit:*)
+            Bash(gh issue create:*)
+            Bash(gh issue list:*)
+            Bash(gh issue edit:*)
+            Bash(curl:*)
+            Bash(jq:*)
+            Bash(date:*)
+            mcp__linear__create_issue
+            mcp__linear__update_issue
+            mcp__linear__list_issues
+            mcp__slack__send_message
+            mcp__slack__create_canvas
+            mcp__gmail__create_draft
+            mcp__airtable__create_record
+            mcp__airtable__update_record
+            mcp__airtable__search_records
+          claude_env: |
+            BUILD_AGENT_WEBHOOK_URL=${{ secrets.BUILD_AGENT_WEBHOOK_URL }}
+            MELODY_SHARED_SECRET=${{ secrets.MELODY_SHARED_SECRET }}
+            AIRTABLE_BASE_ID=${{ secrets.AIRTABLE_BASE_ID }}
+            SLACK_CHANNEL_ID=${{ secrets.SLACK_CHANNEL_ID }}
+          max_turns: 50
+
+      - name: Notify on failure
+        if: failure() && steps.pause_check.outputs.paused == 'false'
+        run: |
+          echo "::error::Synthesis failed. Recon data still committed; dispatch did not fan out."
+        shell: bash

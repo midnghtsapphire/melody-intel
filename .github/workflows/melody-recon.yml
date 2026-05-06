@@ -1,0 +1,87 @@
+name: Melody Recon — Daily Scan
+
+on:
+  schedule:
+    # 13:00 UTC = 07:00 MT (MDT) / 06:00 MT (MST)
+    - cron: '0 13 * * *'
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Why are we running ad-hoc?'
+        required: false
+        default: 'manual trigger'
+
+# Prevent overlapping runs
+concurrency:
+  group: melody-recon
+  cancel-in-progress: false
+
+# Lock down permissions — least privilege
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  scan:
+    name: Run Melody Instigator
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check kill switch
+        id: pause_check
+        run: |
+          if [ -f "docs/MELODY_PAUSE" ]; then
+            echo "paused=true" >> $GITHUB_OUTPUT
+            echo "::warning::Melody is paused — docs/MELODY_PAUSE exists"
+          else
+            echo "paused=false" >> $GITHUB_OUTPUT
+          fi
+        shell: bash
+
+      - name: Checkout repo
+        if: steps.pause_check.outputs.paused == 'false'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Setup Node (for any helper scripts)
+        if: steps.pause_check.outputs.paused == 'false'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run Melody Instigator
+        if: steps.pause_check.outputs.paused == 'false'
+        # Pin to a specific SHA in production — tag here for clarity
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          model: claude-opus-4-7
+          prompt_file: .routines/melody-instigator.md
+          allowed_tools: |
+            WebSearch
+            WebFetch
+            Read
+            Write
+            Edit
+            Bash(git add:*)
+            Bash(git commit:*)
+            Bash(git push:*)
+            Bash(git config:*)
+            Bash(date:*)
+            Bash(uuidgen:*)
+            Bash(jq:*)
+          max_turns: 40
+          # Optional: send to Slack on failure
+          # claude_env: |
+          #   SLACK_WEBHOOK_URL=${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: Notify on failure
+        if: failure() && steps.pause_check.outputs.paused == 'false'
+        run: |
+          echo "::error::Melody Recon failed. Check logs and re-run via workflow_dispatch."
+          # Optional: curl Slack webhook here
+        shell: bash
